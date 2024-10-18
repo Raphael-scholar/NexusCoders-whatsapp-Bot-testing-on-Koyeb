@@ -12,45 +12,49 @@
   "dependencies": {
     "@adiwajshing/keyed-db": "^0.2.4",
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.4.0",
-    "axios": "^1.4.0",
+    "@whiskeysockets/baileys": "^6.5.0",
+    "axios": "^1.6.2",
     "chalk": "^4.1.2",
     "cors": "^2.8.5",
-    "crypto": "^1.0.1",
-    "dotenv": "^16.0.3",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "express-rate-limit": "^6.7.0",
-    "fs-extra": "^11.1.1",
-    "helmet": "^7.0.0",
-    "jimp": "0.16.13",
+    "express-rate-limit": "^7.1.5",
+    "figlet": "^1.7.0",
+    "fs-extra": "^11.2.0",
+    "gradient-string": "^2.0.2",
+    "helmet": "^7.1.0",
+    "jimp": "^0.22.10",
     "libsignal": "git+https://github.com/adiwajshing/libsignal-node",
     "moment-timezone": "^0.5.43",
-    "mongoose": "^7.3.0",
+    "mongoose": "^8.0.3",
     "node-cache": "^5.1.2",
-    "node-cron": "^3.0.2",
-    "node-fetch": "^2.6.11",
-    "pino": "^8.14.1",
-    "pino-pretty": "^10.0.0",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^2.7.0",
+    "pino": "^8.16.2",
+    "pino-pretty": "^10.2.3",
     "protobufjs": "^7.2.5",
     "qrcode": "^1.5.3",
     "qrcode-terminal": "^0.12.0",
-    "sharp": "^0.32.1",
-    "socket.io": "^4.6.2",
-    "uuid": "^9.0.0",
+    "sharp": "^0.33.0",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.1",
     "wa-sticker-formatter": "^4.4.4",
     "web-streams-polyfill": "^3.2.1",
-    "winston": "^3.8.2",
+    "winston": "^3.11.0",
     "winston-daily-rotate-file": "^4.7.1"
   },
   "devDependencies": {
-    "eslint": "^8.42.0",
-    "eslint-config-prettier": "^8.8.0",
-    "eslint-plugin-prettier": "^4.2.1",
-    "nodemon": "^2.0.22",
-    "prettier": "^2.8.8"
+    "@eslint/eslintrc": "^2.1.4",
+    "@typescript-eslint/eslint-plugin": "^6.13.2",
+    "@typescript-eslint/parser": "^6.13.2",
+    "eslint": "^8.55.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.0.1",
+    "nodemon": "^3.0.2",
+    "prettier": "^3.1.0"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=16.0.0"
   },
   "repository": {
     "type": "git",
@@ -71,6 +75,11 @@
   },
   "homepage": "https://github.com/NexusCoders-cyber/nexuscoders-whatsapp-bot#readme",
   "resolutions": {
-    "jimp": "0.16.13"
+    "jimp": "^0.22.10",
+    "glob": "^10.3.10",
+    "@eslint/eslintrc": "^2.1.4"
+  },
+  "overrides": {
+    "glob": "^10.3.10"
   }
 }
