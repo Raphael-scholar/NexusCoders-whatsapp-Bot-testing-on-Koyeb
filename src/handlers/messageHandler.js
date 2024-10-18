@@ -1,7 +1,7 @@
-const { searchCommands } = require('./commandHandler');
-const { getUserPermissions } = require('../utils/permissions');
+const { getCommands } = require('./commandHandler');
 const config = require('../config');
-const logger = require('../utils/logger');
+
+const cooldowns = new Map();
 
 const messageHandler = async (sock, msg) => {
     try {
@@ -13,32 +13,54 @@ const messageHandler = async (sock, msg) => {
         if (!content || !content.startsWith(config.prefix)) return;
 
         const args = content.slice(config.prefix.length).trim().split(/ +/);
-        const commandName = args.shift().toLowerCase();
-        const command = await searchCommands(commandName);
+        const cmdName = args.shift().toLowerCase();
+        const command = getCommands().get(cmdName);
 
-        if (!command) {
-            await sock.sendMessage(msg.key.remoteJid, { 
-                text: '❌ Command not found! Use .help to see available commands.' 
-            });
+        if (!command) return;
+
+        const sender = msg.key.remoteJid;
+        const isGroup = sender.endsWith('@g.us');
+        const isOwner = sender === config.ownerNumber + '@s.whatsapp.net';
+
+        if (command.ownerOnly && !isOwner) {
+            await sock.sendMessage(sender, { text: config.messages.ownerOnly });
             return;
         }
 
-        const userPermissions = await getUserPermissions(msg.key.participant || msg.key.remoteJid);
-        const hasPermission = userPermissions.includes(command.permission);
-
-        if (!hasPermission) {
-            await sock.sendMessage(msg.key.remoteJid, { 
-                text: '❌ You do not have permission to use this command.' 
-            });
+        if (command.groupOnly && !isGroup) {
+            await sock.sendMessage(sender, { text: config.messages.groupOnly });
             return;
         }
+
+        if (command.privateOnly && isGroup) {
+            await sock.sendMessage(sender, { text: config.messages.privateOnly });
+            return;
+        }
+
+        if (!cooldowns.has(command.name)) {
+            cooldowns.set(command.name, new Map());
+        }
+
+        const timestamps = cooldowns.get(command.name);
+        const cooldownAmount = (command.cooldown || 3) * 1000;
+        const now = Date.now();
+
+        if (timestamps.has(sender)) {
+            const expirationTime = timestamps.get(sender) + cooldownAmount;
+            if (now < expirationTime) {
+                const timeLeft = (expirationTime - now) / 1000;
+                const message = config.messages.cooldown.replace('{time}', timeLeft.toFixed(1));
+                await sock.sendMessage(sender, { text: message });
+                return;
+            }
+        }
+
+        timestamps.set(sender, now);
+        setTimeout(() => timestamps.delete(sender), cooldownAmount);
 
         await command.execute(sock, msg, args);
     } catch (error) {
-        logger.error('Message handler error:', error);
-        await sock.sendMessage(msg.key.remoteJid, { 
-            text: '❌ An error occurred while processing your command.' 
-        });
+        await sock.sendMessage(msg.key.remoteJid, { text: config.messages.error });
     }
 };
 
