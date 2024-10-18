@@ -32,22 +32,10 @@ async function ensureDirectories() {
     }
 }
 
-async function displayBanner() {
-    return new Promise((resolve) => {
-        figlet(config.botName, {
-            font: 'Standard',
-            horizontalLayout: 'default',
-            verticalLayout: 'default'
-        }, function(err, data) {
-            if (!err) {
-                console.log(gradient.rainbow(data));
-                console.log(gradient.pastel('\n' + '='.repeat(50) + '\n'));
-                console.log(gradient.cristal(`${config.botName} v${config.version}`));
-                console.log(gradient.pastel('\n' + '='.repeat(50) + '\n'));
-            }
-            resolve();
-        });
-    });
+async function createDefaultThumbnail() {
+    const defaultThumbnailPath = './assets/thumbnail.jpg';
+    const defaultThumbnailData = Buffer.from('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDABQODxIPDRQSEBIXFRQdHx0fHRsdHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR3/2wBDAR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR3/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=', 'base64');
+    await fs.writeFile(defaultThumbnailPath, defaultThumbnailData);
 }
 
 async function writeSessionData() {
@@ -57,7 +45,6 @@ async function writeSessionData() {
             await fs.writeJSON(path.join(sessionDir, 'creds.json'), sessionData);
             return true;
         } catch (error) {
-            logger.error('Failed to write session data:', error);
             return false;
         }
     }
@@ -66,7 +53,8 @@ async function writeSessionData() {
 
 async function connectToWhatsApp() {
     await ensureDirectories();
-    await writeSessionData();
+    await createDefaultThumbnail();
+    const hasSession = await writeSessionData();
     
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version } = await fetchLatestBaileysVersion();
@@ -74,16 +62,17 @@ async function connectToWhatsApp() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: true,
+        printQRInTerminal: !hasSession,
         logger: P({ level: 'silent' }),
         browser: Browsers.appropriate('Chrome'),
         msgRetryCounterCache,
-        defaultQueryTimeoutMs: 60000,
+        defaultQueryTimeoutMs: undefined,
         connectTimeoutMs: 60000,
         retryRequestDelayMs: 5000,
         maxRetries: 5,
         qrTimeout: 40000,
         markOnlineOnConnect: true,
+        generateHighQualityLinkPreview: true,
         getMessage: async () => {
             return { conversation: config.botName };
         }
@@ -97,14 +86,9 @@ async function connectToWhatsApp() {
         }
         
         if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
-                logger.info('Reconnecting to WhatsApp...');
                 setTimeout(connectToWhatsApp, 5000);
-            } else {
-                logger.error('Connection terminated. Cleaning up...');
             }
         }
         
@@ -114,29 +98,14 @@ async function connectToWhatsApp() {
                 const startupMsg = await startupMessage();
                 try {
                     await sock.sendMessage(config.ownerNumber + '@s.whatsapp.net', {
-                        text: startupMsg,
-                        contextInfo: {
-                            externalAdReply: {
-                                title: config.botName,
-                                body: `Version ${config.version}`,
-                                thumbnail: await fs.readFile('./assets/thumbnail.jpg'),
-                                sourceUrl: config.sourceUrl
-                            }
-                        }
+                        text: startupMsg
                     });
-                } catch (error) {
-                    logger.error('Failed to send startup message:', error);
-                }
+                } catch (error) {}
             }
         }
     });
 
-    sock.ev.on('creds.update', async (creds) => {
-        await saveCreds();
-        const sessionJson = JSON.stringify(creds);
-        const sessionBase64 = Buffer.from(sessionJson).toString('base64');
-        logger.info('New session data:', sessionBase64);
-    });
+    sock.ev.on('creds.update', saveCreds);
     
     sock.ev.on('messages.upsert', async chatUpdate => {
         if (chatUpdate.type === 'notify') {
@@ -144,9 +113,7 @@ async function connectToWhatsApp() {
                 if (!msg.key.fromMe) {
                     try {
                         await messageHandler(sock, msg);
-                    } catch (error) {
-                        logger.error('Message handling error:', error);
-                    }
+                    } catch (error) {}
                 }
             }
         }
@@ -171,7 +138,6 @@ async function initialize() {
     try {
         await displayBanner();
         await connectToDatabase();
-        await initializeCommands();
         await connectToWhatsApp();
         await startServer();
         
