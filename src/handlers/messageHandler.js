@@ -1,38 +1,50 @@
-const logger = require('../utils/logger')
-const commands = require('./commands')
+const config = require('../config');
+const { User } = require('../utils/database');
+const { executeCommand } = require('./commandHandler');
+const { processMessage } = require('../utils/messageProcessor');
+const logger = require('../utils/logger');
 
 async function messageHandler(sock, msg) {
+    const content = msg.message?.conversation || 
+                   msg.message?.extendedTextMessage?.text || 
+                   msg.message?.imageMessage?.caption || 
+                   msg.message?.videoMessage?.caption || '';
+                   
+    const sender = msg.key.remoteJid;
+    const isGroup = sender.endsWith('@g.us');
+    const groupMetadata = isGroup ? await sock.groupMetadata(sender) : {};
+    const pushName = msg.pushName || 'User';
+    
+    let user = await User.findOne({ phoneNumber: sender });
+    if (!user) {
+        user = await User.create({ phoneNumber: sender });
+    }
+
+    const messageInfo = {
+        sock,
+        msg,
+        sender,
+        content,
+        isGroup,
+        groupMetadata,
+        pushName,
+        user
+    };
+
+    if (!content) return;
+
     try {
-        const messageType = Object.keys(msg.message)[0]
-        if (!messageType) return
-
-        const isTextMessage = messageType === 'conversation' || messageType === 'extendedTextMessage'
-        if (!isTextMessage) return
-
-        const text = msg.message.conversation || msg.message?.extendedTextMessage?.text || ''
-        if (!text.startsWith('!')) return
-
-        const [cmdName, ...args] = text.slice(1).toLowerCase().trim().split(' ')
-        const command = commands[cmdName]
-
-        if (command) {
-            await command(sock, msg, args)
+        if (content.startsWith(config.prefix)) {
+            const args = content.slice(config.prefix.length).trim().split(/ +/);
+            const command = args.shift().toLowerCase();
+            await executeCommand(messageInfo, command, args);
         } else {
-            await sock.sendMessage(msg.key.remoteJid, {
-                text: `⚠️ Command not found. Use !help to see available commands.`
-            }, { quoted: msg })
+            await processMessage(messageInfo);
         }
-
     } catch (error) {
-        logger.error('Error in message handler:', error)
-        try {
-            await sock.sendMessage(msg.key.remoteJid, {
-                text: '❌ An error occurred while processing your command.'
-            }, { quoted: msg })
-        } catch (sendError) {
-            logger.error('Error sending error message:', sendError)
-        }
+        logger.error('Message handling error:', error);
+        await sock.sendMessage(sender, { text: config.messages.error });
     }
 }
 
-module.exports = messageHandler
+module.exports = messageHandler;
