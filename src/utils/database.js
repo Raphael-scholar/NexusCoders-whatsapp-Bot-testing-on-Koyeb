@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const connectToDatabase = async () => {
     try {
-        await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/nexusbot', {
+        await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://mateochatbot:xdtL2bYQ9eV3CeXM@gerald.r2hjy.mongodb.net/', {
             autoIndex: true
         });
         return true;
