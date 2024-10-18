@@ -1,28 +1,36 @@
 const mongoose = require('mongoose');
-const config = require('./config');
-const logger = require('./src/utils/logger');
+const config = require('../config');
+const logger = require('./logger');
 
-async function connectToDatabase() {
+const connectToDatabase = async () => {
     try {
-        await mongoose.connect(config.mongodb.uri, config.mongodb.options);
-        logger.info('Connected to MongoDB');
-    } catch (error) {
-        logger.error('MongoDB connection error:', error);
-        throw error;
-    }
-}
+        await mongoose.connect(process.env.MONGO_URL || config.mongoUrl, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true
+        });
+        
+        mongoose.connection.on('connected', () => {
+            logger.info('MongoDB connected successfully');
+        });
 
-async function disconnectFromDatabase() {
-    try {
-        await mongoose.disconnect();
-        logger.info('Disconnected from MongoDB');
-    } catch (error) {
-        logger.error('MongoDB disconnection error:', error);
-        throw error;
-    }
-}
+        mongoose.connection.on('error', (err) => {
+            logger.error('MongoDB connection error:', err);
+            process.exit(1);
+        });
 
-module.exports = {
-    connectToDatabase,
-    disconnectFromDatabase
+        mongoose.connection.on('disconnected', () => {
+            logger.warn('MongoDB disconnected');
+        });
+
+        process.on('SIGINT', async () => {
+            await mongoose.connection.close();
+            process.exit(0);
+        });
+
+    } catch (error) {
+        logger.error('Database connection failed:', error);
+        process.exit(1);
+    }
 };
+
+module.exports = { connectToDatabase };
