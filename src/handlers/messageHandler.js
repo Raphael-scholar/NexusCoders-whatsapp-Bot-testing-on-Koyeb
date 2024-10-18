@@ -1,50 +1,41 @@
 const config = require('../config');
-const { User } = require('../utils/database');
-const { executeCommand } = require('./commandHandler');
-const { processMessage } = require('../utils/messageProcessor');
 const logger = require('../utils/logger');
+const { checkPermission } = require('../utils/permissions');
 
-async function messageHandler(sock, msg) {
-    const content = msg.message?.conversation || 
-                   msg.message?.extendedTextMessage?.text || 
-                   msg.message?.imageMessage?.caption || 
-                   msg.message?.videoMessage?.caption || '';
-                   
-    const sender = msg.key.remoteJid;
-    const isGroup = sender.endsWith('@g.us');
-    const groupMetadata = isGroup ? await sock.groupMetadata(sender) : {};
-    const pushName = msg.pushName || 'User';
-    
-    let user = await User.findOne({ phoneNumber: sender });
-    if (!user) {
-        user = await User.create({ phoneNumber: sender });
-    }
-
-    const messageInfo = {
-        sock,
-        msg,
-        sender,
-        content,
-        isGroup,
-        groupMetadata,
-        pushName,
-        user
-    };
-
-    if (!content) return;
-
+const messageHandler = async (sock, msg) => {
     try {
-        if (content.startsWith(config.prefix)) {
-            const args = content.slice(config.prefix.length).trim().split(/ +/);
-            const command = args.shift().toLowerCase();
-            await executeCommand(messageInfo, command, args);
-        } else {
-            await processMessage(messageInfo);
+        const content = msg.message?.conversation || 
+                       msg.message?.extendedTextMessage?.text || 
+                       msg.message?.imageMessage?.caption || 
+                       msg.message?.videoMessage?.caption;
+                       
+        if (!content) return;
+        
+        if (!content.startsWith(config.prefix)) return;
+        
+        const args = content.slice(config.prefix.length).trim().split(/ +/);
+        const commandName = args.shift().toLowerCase();
+        const command = sock.commands.get(commandName);
+        
+        if (!command) return;
+        
+        const hasPermission = await checkPermission(msg.key.remoteJid, command.permission || 'USE_COMMANDS');
+        
+        if (!hasPermission) {
+            await sock.sendMessage(msg.key.remoteJid, { 
+                text: '❌ You do not have permission to use this command.' 
+            });
+            return;
         }
+        
+        await command.execute(sock, msg, args);
+        
     } catch (error) {
-        logger.error('Message handling error:', error);
-        await sock.sendMessage(sender, { text: config.messages.error });
+        logger.error('Message handler error:', error);
+        await sock.sendMessage(msg.key.remoteJid, { 
+            text: '❌ An error occurred while processing your command.' 
+        });
     }
-}
+};
 
 module.exports = messageHandler;
