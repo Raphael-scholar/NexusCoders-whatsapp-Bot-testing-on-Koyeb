@@ -22,8 +22,12 @@ const { startupMessage } = require('./src/utils/messages');
 
 const msgRetryCounterCache = new NodeCache();
 const app = express();
+let sock = null;
 let initialConnection = true;
+let isConnecting = false;
 const sessionDir = path.join(process.cwd(), 'auth_info_baileys');
+const MAX_RETRIES = 5;
+let retryCount = 0;
 
 async function displayBanner() {
     return new Promise((resolve, reject) => {
@@ -65,83 +69,113 @@ async function writeSessionData() {
 }
 
 async function connectToWhatsApp() {
-    await ensureDirectories();
-    await createDefaultThumbnail();
-    const hasSession = await writeSessionData();
-    
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    const { version } = await fetchLatestBaileysVersion();
-    
-    const sock = makeWASocket({
-        version,
-        auth: state,
-        printQRInTerminal: !hasSession,
-        logger: P({ level: 'silent' }),
-        browser: Browsers.appropriate('Chrome'),
-        msgRetryCounterCache,
-        defaultQueryTimeoutMs: undefined,
-        connectTimeoutMs: 60000,
-        retryRequestDelayMs: 5000,
-        maxRetries: 5,
-        qrTimeout: 40000,
-        markOnlineOnConnect: true,
-        generateHighQualityLinkPreview: true,
-        getMessage: async () => {
-            return { conversation: config.botName };
-        }
-    });
+    if (isConnecting) return;
+    isConnecting = true;
 
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+    try {
+        await ensureDirectories();
+        await createDefaultThumbnail();
+        const hasSession = await writeSessionData();
         
-        if (connection === 'connecting') {
-            logger.info('Establishing connection...');
-        }
+        const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+        const { version } = await fetchLatestBaileysVersion();
         
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 5000);
+        sock = makeWASocket({
+            version,
+            auth: state,
+            printQRInTerminal: !hasSession,
+            logger: P({ level: 'silent' }),
+            browser: Browsers.appropriate('Chrome'),
+            msgRetryCounterCache,
+            defaultQueryTimeoutMs: 60000,
+            connectTimeoutMs: 60000,
+            retryRequestDelayMs: 5000,
+            maxRetries: 5,
+            qrTimeout: 40000,
+            markOnlineOnConnect: true,
+            generateHighQualityLinkPreview: true,
+            getMessage: async () => {
+                return { conversation: config.botName };
             }
-        }
-        
-        if (connection === 'open') {
-            if (initialConnection) {
-                initialConnection = false;
-                const startupMsg = await startupMessage();
-                try {
-                    await sock.sendMessage(config.ownerNumber + '@s.whatsapp.net', {
-                        text: startupMsg
-                    });
-                } catch (error) {}
-            }
-        }
-    });
+        });
 
-    sock.ev.on('creds.update', saveCreds);
-    
-    sock.ev.on('messages.upsert', async chatUpdate => {
-        if (chatUpdate.type === 'notify') {
-            for (const msg of chatUpdate.messages) {
-                if (!msg.key.fromMe) {
-                    try {
-                        await messageHandler(sock, msg);
-                    } catch (error) {}
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect } = update;
+            
+            if (connection === 'connecting') {
+                logger.info('Establishing connection...');
+            }
+            
+            if (connection === 'close') {
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                isConnecting = false;
+                
+                if (statusCode !== DisconnectReason.loggedOut && retryCount < MAX_RETRIES) {
+                    retryCount++;
+                    setTimeout(connectToWhatsApp, 5000);
+                } else if (retryCount >= MAX_RETRIES) {
+                    logger.error('Max retry attempts reached');
+                    process.exit(1);
                 }
             }
-        }
-    });
+            
+            if (connection === 'open') {
+                retryCount = 0;
+                isConnecting = false;
+                
+                if (initialConnection) {
+                    initialConnection = false;
+                    const startupMsg = await startupMessage();
+                    try {
+                        await sock.sendMessage(config.ownerNumber + '@s.whatsapp.net', {
+                            text: startupMsg
+                        });
+                    } catch (error) {
+                        logger.error('Failed to send startup message');
+                    }
+                }
+            }
+        });
 
-    return sock;
+        sock.ev.on('creds.update', saveCreds);
+        
+        sock.ev.on('messages.upsert', async chatUpdate => {
+            if (chatUpdate.type === 'notify') {
+                for (const msg of chatUpdate.messages) {
+                    if (!msg.key.fromMe) {
+                        try {
+                            await messageHandler(sock, msg);
+                        } catch (error) {
+                            logger.error('Message handling error:', error);
+                        }
+                    }
+                }
+            }
+        });
+
+        return sock;
+    } catch (error) {
+        isConnecting = false;
+        logger.error('Connection error:', error);
+        if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            setTimeout(connectToWhatsApp, 5000);
+        } else {
+            logger.error('Max retry attempts reached');
+            process.exit(1);
+        }
+    }
 }
 
 async function startServer() {
     const port = process.env.PORT || 3000;
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
+    
     app.get('/', (req, res) => {
         res.send(`${config.botName} is running!`);
     });
+    
     app.listen(port, '0.0.0.0', () => {
         logger.info(`Server running on port ${port}`);
     });
@@ -151,6 +185,7 @@ async function initialize() {
     try {
         await displayBanner();
         await connectToDatabase();
+        await initializeCommands();
         await connectToWhatsApp();
         await startServer();
         
@@ -160,6 +195,7 @@ async function initialize() {
         
         process.on('uncaughtException', (err) => {
             logger.error('Uncaught Exception:', err);
+            process.exit(1);
         });
     } catch (error) {
         logger.error('Initialization error:', error);
