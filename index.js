@@ -49,23 +49,27 @@ async function ensureDirectories() {
     }
 }
 
+async function writeSessionData() {
+    if (!process.env.SESSION_DATA) {
+        throw new Error('SESSION_DATA environment variable is required');
+    }
+
+    try {
+        const sessionData = JSON.parse(Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8'));
+        await fs.emptyDir(sessionDir);
+        await fs.ensureDir(sessionDir);
+        await fs.writeJSON(path.join(sessionDir, 'creds.json'), sessionData);
+        return true;
+    } catch (error) {
+        logger.error('Failed to write session data:', error);
+        throw error;
+    }
+}
+
 async function createDefaultThumbnail() {
     const defaultThumbnailPath = './assets/thumbnail.jpg';
     const defaultThumbnailData = Buffer.from('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDABQODxIPDRQSEBIXFRQdHx0fHRsdHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR3/2wBDAR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR3/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=', 'base64');
     await fs.writeFile(defaultThumbnailPath, defaultThumbnailData);
-}
-
-async function writeSessionData() {
-    if (process.env.SESSION_DATA) {
-        try {
-            const sessionData = JSON.parse(Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8'));
-            await fs.writeJSON(path.join(sessionDir, 'creds.json'), sessionData);
-            return true;
-        } catch (error) {
-            return false;
-        }
-    }
-    return false;
 }
 
 async function connectToWhatsApp() {
@@ -75,7 +79,7 @@ async function connectToWhatsApp() {
     try {
         await ensureDirectories();
         await createDefaultThumbnail();
-        const hasSession = await writeSessionData();
+        await writeSessionData();
         
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         const { version } = await fetchLatestBaileysVersion();
@@ -83,15 +87,15 @@ async function connectToWhatsApp() {
         sock = makeWASocket({
             version,
             auth: state,
-            printQRInTerminal: !hasSession,
+            printQRInTerminal: false,
             logger: P({ level: 'silent' }),
             browser: Browsers.appropriate('Chrome'),
             msgRetryCounterCache,
-            defaultQueryTimeoutMs: 60000,
-            connectTimeoutMs: 60000,
-            retryRequestDelayMs: 5000,
-            maxRetries: 5,
-            qrTimeout: 40000,
+            defaultQueryTimeoutMs: 30000,
+            connectTimeoutMs: 30000,
+            retryRequestDelayMs: 2000,
+            maxRetries: 3,
+            qrTimeout: 0,
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: true,
             getMessage: async () => {
@@ -102,19 +106,14 @@ async function connectToWhatsApp() {
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
             
-            if (connection === 'connecting') {
-                logger.info('Establishing connection...');
-            }
-            
             if (connection === 'close') {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
                 isConnecting = false;
                 
-                if (statusCode !== DisconnectReason.loggedOut && retryCount < MAX_RETRIES) {
+                if (shouldReconnect && retryCount < MAX_RETRIES) {
                     retryCount++;
-                    setTimeout(connectToWhatsApp, 5000);
-                } else if (retryCount >= MAX_RETRIES) {
-                    logger.error('Max retry attempts reached');
+                    setTimeout(connectToWhatsApp, 2000);
+                } else {
                     process.exit(1);
                 }
             }
@@ -146,7 +145,9 @@ async function connectToWhatsApp() {
                         try {
                             await messageHandler(sock, msg);
                         } catch (error) {
-                            logger.error('Message handling error:', error);
+                            if (error.message.includes('Bad MAC') || error.message.includes('Failed to decrypt')) {
+                                process.exit(1);
+                            }
                         }
                     }
                 }
@@ -159,9 +160,8 @@ async function connectToWhatsApp() {
         logger.error('Connection error:', error);
         if (retryCount < MAX_RETRIES) {
             retryCount++;
-            setTimeout(connectToWhatsApp, 5000);
+            setTimeout(connectToWhatsApp, 2000);
         } else {
-            logger.error('Max retry attempts reached');
             process.exit(1);
         }
     }
@@ -190,15 +190,15 @@ async function initialize() {
         await startServer();
         
         process.on('unhandledRejection', (err) => {
-            logger.error('Unhandled Rejection:', err);
+            if (err.message.includes('Bad MAC') || err.message.includes('Failed to decrypt')) {
+                process.exit(1);
+            }
         });
         
         process.on('uncaughtException', (err) => {
-            logger.error('Uncaught Exception:', err);
             process.exit(1);
         });
     } catch (error) {
-        logger.error('Initialization error:', error);
         process.exit(1);
     }
 }
