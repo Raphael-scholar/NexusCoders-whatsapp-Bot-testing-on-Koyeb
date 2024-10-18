@@ -2,7 +2,7 @@
 
 A powerful,fast and feature-rich WhatsApp bot created by the NexusCoders team.
 
-![NexusCoders Team Logo](https://example.com/nexuscoders-logo.png)
+![NexusCoders Team Logo](https://tiny.one/ycktdvah)
 
 ## Features
 
