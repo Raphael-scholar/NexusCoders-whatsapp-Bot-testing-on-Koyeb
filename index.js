@@ -25,6 +25,19 @@ const app = express();
 let initialConnection = true;
 const sessionDir = path.join(process.cwd(), 'auth_info_baileys');
 
+async function displayBanner() {
+    return new Promise((resolve, reject) => {
+        figlet(config.botName, (err, data) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            console.log(gradient.rainbow(data));
+            resolve();
+        });
+    });
+}
+
 async function ensureDirectories() {
     const dirs = [sessionDir, 'temp', 'assets', 'logs'];
     for (const dir of dirs) {
