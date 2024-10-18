@@ -1,0 +1,10 @@
+{"level":"info","message":"Bot initialization started","timestamp":"2024-10-18T12:00:00.000Z"}
+{"level":"info","message":"Database connection established","timestamp":"2024-10-18T12:00:01.000Z"}
+{"level":"info","message":"Commands initialized","timestamp":"2024-10-18T12:00:02.000Z"}
+{"level":"info","message":"WhatsApp connection established","timestamp":"2024-10-18T12:00:03.000Z"}
+{"level":"info","message":"Server started on port 3000","timestamp":"2024-10-18T12:00:04.000Z"}
+{"level":"info","message":"New message received","timestamp":"2024-10-18T12:01:00.000Z"}
+{"level":"info","message":"Command executed successfully","timestamp":"2024-10-18T12:01:01.000Z"}
+{"level":"error","message":"Message handling error: Command not found","timestamp":"2024-10-18T12:02:00.000Z"}
+{"level":"info","message":"User permission granted","timestamp":"2024-10-18T12:03:00.000Z"}
+{"level":"info","message":"Group settings updated","timestamp":"2024-10-18T12:04:00.000Z"}
