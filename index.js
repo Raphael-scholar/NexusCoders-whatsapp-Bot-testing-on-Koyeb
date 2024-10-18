@@ -26,18 +26,10 @@ let initialConnection = true;
 const sessionDir = path.join(process.cwd(), 'auth_info_baileys');
 
 async function ensureDirectories() {
-    const dirs = [
-        sessionDir,
-        'temp',
-        'assets',
-        'logs'
-    ];
-    
+    const dirs = [sessionDir, 'temp', 'assets', 'logs'];
     for (const dir of dirs) {
         await fs.ensureDir(dir);
     }
-    
-    await fs.emptyDir(sessionDir);
 }
 
 async function displayBanner() {
@@ -58,7 +50,24 @@ async function displayBanner() {
     });
 }
 
+async function writeSessionData() {
+    if (process.env.SESSION_DATA) {
+        try {
+            const sessionData = JSON.parse(Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8'));
+            await fs.writeJSON(path.join(sessionDir, 'creds.json'), sessionData);
+            return true;
+        } catch (error) {
+            logger.error('Failed to write session data:', error);
+            return false;
+        }
+    }
+    return false;
+}
+
 async function connectToWhatsApp() {
+    await ensureDirectories();
+    await writeSessionData();
+    
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version } = await fetchLatestBaileysVersion();
     
@@ -96,7 +105,6 @@ async function connectToWhatsApp() {
                 setTimeout(connectToWhatsApp, 5000);
             } else {
                 logger.error('Connection terminated. Cleaning up...');
-                await fs.emptyDir(sessionDir);
             }
         }
         
@@ -123,7 +131,12 @@ async function connectToWhatsApp() {
         }
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', async (creds) => {
+        await saveCreds();
+        const sessionJson = JSON.stringify(creds);
+        const sessionBase64 = Buffer.from(sessionJson).toString('base64');
+        logger.info('New session data:', sessionBase64);
+    });
     
     sock.ev.on('messages.upsert', async chatUpdate => {
         if (chatUpdate.type === 'notify') {
@@ -144,14 +157,11 @@ async function connectToWhatsApp() {
 
 async function startServer() {
     const port = process.env.PORT || 3000;
-    
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
-    
     app.get('/', (req, res) => {
         res.send(`${config.botName} is running!`);
     });
-    
     app.listen(port, '0.0.0.0', () => {
         logger.info(`Server running on port ${port}`);
     });
@@ -160,7 +170,6 @@ async function startServer() {
 async function initialize() {
     try {
         await displayBanner();
-        await ensureDirectories();
         await connectToDatabase();
         await initializeCommands();
         await connectToWhatsApp();
