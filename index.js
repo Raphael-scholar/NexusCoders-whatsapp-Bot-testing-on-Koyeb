@@ -87,15 +87,15 @@ async function connectToWhatsApp() {
         sock = makeWASocket({
             version,
             auth: state,
-            printQRInTerminal: false,
+            printQRInTerminal: true,
             logger: P({ level: 'silent' }),
             browser: Browsers.appropriate('Chrome'),
             msgRetryCounterCache,
-            defaultQueryTimeoutMs: 30000,
-            connectTimeoutMs: 30000,
-            retryRequestDelayMs: 2000,
-            maxRetries: 3,
-            qrTimeout: 0,
+            defaultQueryTimeoutMs: 60000,
+            connectTimeoutMs: 60000,
+            retryRequestDelayMs: 5000,
+            maxRetries: 5,
+            qrTimeout: 60000,
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: true,
             getMessage: async () => {
@@ -107,13 +107,15 @@ async function connectToWhatsApp() {
             const { connection, lastDisconnect } = update;
             
             if (connection === 'close') {
-                const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
                 isConnecting = false;
                 
                 if (shouldReconnect && retryCount < MAX_RETRIES) {
                     retryCount++;
-                    setTimeout(connectToWhatsApp, 2000);
+                    logger.info(`Reconnecting... Attempt ${retryCount}`);
+                    setTimeout(connectToWhatsApp, 5000);
                 } else {
+                    logger.error('Connection closed. Max retries reached or logged out.');
                     process.exit(1);
                 }
             }
@@ -121,6 +123,7 @@ async function connectToWhatsApp() {
             if (connection === 'open') {
                 retryCount = 0;
                 isConnecting = false;
+                logger.info('Connected to WhatsApp');
                 
                 if (initialConnection) {
                     initialConnection = false;
@@ -130,7 +133,7 @@ async function connectToWhatsApp() {
                             text: startupMsg
                         });
                     } catch (error) {
-                        logger.error('Failed to send startup message');
+                        logger.error('Failed to send startup message:', error);
                     }
                 }
             }
@@ -145,7 +148,8 @@ async function connectToWhatsApp() {
                         try {
                             await messageHandler(sock, msg);
                         } catch (error) {
-                            if (error.message.includes('Bad MAC') || error.message.includes('Failed to decrypt')) {
+                            logger.error('Message handler error:', error);
+                            if (error.message.includes('Session closed')) {
                                 process.exit(1);
                             }
                         }
@@ -160,8 +164,10 @@ async function connectToWhatsApp() {
         logger.error('Connection error:', error);
         if (retryCount < MAX_RETRIES) {
             retryCount++;
-            setTimeout(connectToWhatsApp, 2000);
+            logger.info(`Retrying connection... Attempt ${retryCount}`);
+            setTimeout(connectToWhatsApp, 5000);
         } else {
+            logger.error('Max retries reached. Exiting...');
             process.exit(1);
         }
     }
@@ -189,16 +195,19 @@ async function initialize() {
         await connectToWhatsApp();
         await startServer();
         
-        process.on('unhandledRejection', (err) => {
-            if (err.message.includes('Bad MAC') || err.message.includes('Failed to decrypt')) {
+        process.on('unhandledRejection', (error) => {
+            logger.error('Unhandled rejection:', error);
+            if (error.message.includes('Session closed')) {
                 process.exit(1);
             }
         });
         
-        process.on('uncaughtException', (err) => {
+        process.on('uncaughtException', (error) => {
+            logger.error('Uncaught exception:', error);
             process.exit(1);
         });
     } catch (error) {
+        logger.error('Initialization error:', error);
         process.exit(1);
     }
 }
