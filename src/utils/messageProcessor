@@ -1,0 +1,64 @@
+const config = require('../config');
+const logger = require('./logger');
+
+async function processMessage(messageInfo) {
+    const { sock, msg, sender, content, isGroup, user } = messageInfo;
+
+    if (msg.message?.imageMessage) {
+        await handleImage(messageInfo);
+    }
+    
+    if (msg.message?.videoMessage) {
+        await handleVideo(messageInfo);
+    }
+    
+    if (msg.message?.stickerMessage) {
+        await handleSticker(messageInfo);
+    }
+}
+
+async function handleImage(messageInfo) {
+    const { sock, msg, sender } = messageInfo;
+    
+    try {
+        const type = Object.keys(msg.message)[0];
+        const quoted = msg.message[type];
+        
+        if (quoted?.caption?.startsWith(config.prefix)) {
+            return;
+        }
+    } catch (error) {
+        logger.error('Image handling error:', error);
+    }
+}
+
+async function handleVideo(messageInfo) {
+    const { sock, msg, sender } = messageInfo;
+    
+    try {
+        const type = Object.keys(msg.message)[0];
+        const quoted = msg.message[type];
+        
+        if (quoted?.caption?.startsWith(config.prefix)) {
+            return;
+        }
+    } catch (error) {
+        logger.error('Video handling error:', error);
+    }
+}
+
+async function handleSticker(messageInfo) {
+    const { sock, msg, sender } = messageInfo;
+    
+    try {
+        if (msg.message?.stickerMessage?.isAnimated) {
+            return;
+        }
+    } catch (error) {
+        logger.error('Sticker handling error:', error);
+    }
+}
+
+module.exports = {
+    processMessage
+};
