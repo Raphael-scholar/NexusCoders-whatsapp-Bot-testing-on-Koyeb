@@ -1,6 +1,7 @@
+const { searchCommands } = require('./commandHandler');
+const { getUserPermissions } = require('../utils/permissions');
 const config = require('../config');
 const logger = require('../utils/logger');
-const { checkPermission } = require('../utils/permissions');
 
 const messageHandler = async (sock, msg) => {
     try {
@@ -8,28 +9,31 @@ const messageHandler = async (sock, msg) => {
                        msg.message?.extendedTextMessage?.text || 
                        msg.message?.imageMessage?.caption || 
                        msg.message?.videoMessage?.caption;
-                       
-        if (!content) return;
-        
-        if (!content.startsWith(config.prefix)) return;
-        
+
+        if (!content || !content.startsWith(config.prefix)) return;
+
         const args = content.slice(config.prefix.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
-        const command = sock.commands.get(commandName);
-        
-        if (!command) return;
-        
-        const hasPermission = await checkPermission(msg.key.remoteJid, command.permission || 'USE_COMMANDS');
-        
+        const command = await searchCommands(commandName);
+
+        if (!command) {
+            await sock.sendMessage(msg.key.remoteJid, { 
+                text: '❌ Command not found! Use .help to see available commands.' 
+            });
+            return;
+        }
+
+        const userPermissions = await getUserPermissions(msg.key.participant || msg.key.remoteJid);
+        const hasPermission = userPermissions.includes(command.permission);
+
         if (!hasPermission) {
             await sock.sendMessage(msg.key.remoteJid, { 
                 text: '❌ You do not have permission to use this command.' 
             });
             return;
         }
-        
+
         await command.execute(sock, msg, args);
-        
     } catch (error) {
         logger.error('Message handler error:', error);
         await sock.sendMessage(msg.key.remoteJid, { 
