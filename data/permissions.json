@@ -1,0 +1,14 @@
+{
+  "ownerNumber@s.whatsapp.net": [
+    "USE_COMMANDS",
+    "ADMIN",
+    "MANAGE_USERS",
+    "MANAGE_GROUPS",
+    "MANAGE_SETTINGS",
+    "MANAGE_PLUGINS",
+    "MANAGE_PERMISSIONS"
+  ],
+  "default": [
+    "USE_COMMANDS"
+  ]
+}
