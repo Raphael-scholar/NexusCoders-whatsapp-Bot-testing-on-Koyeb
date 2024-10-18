@@ -1,0 +1,5 @@
+{"level":"error","message":"Bot initialization started","timestamp":"2024-10-18T12:00:00.000Z"}
+{"level":"error","message":"Database connection established","timestamp":"2024-10-18T12:00:01.000Z"}
+{"level":"error","message":"Commands initialized","timestamp":"2024-10-18T12:00:02.000Z"}
+{"level":"error","message":"WhatsApp connection established","timestamp":"2024-10-18T12:00:03.000Z"}
+{"level":"error","message":"Server started on port 3000","timestamp":"2024-10-18T12:00:04.000Z"}
