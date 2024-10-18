@@ -30,57 +30,42 @@ const MAX_RETRIES = 5;
 let retryCount = 0;
 
 async function displayBanner() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
         figlet(config.botName, (err, data) => {
-            if (err) {
-                reject(err);
-                return;
-            }
-            console.log(gradient.rainbow(data));
+            if (!err) console.log(gradient.rainbow(data));
             resolve();
         });
     });
 }
 
 async function ensureDirectories() {
-    const dirs = [sessionDir, 'temp', 'assets', 'logs'];
-    for (const dir of dirs) {
-        await fs.ensureDir(dir);
-    }
+    await Promise.all([
+        fs.ensureDir(sessionDir),
+        fs.ensureDir('temp'),
+        fs.ensureDir('assets'),
+        fs.ensureDir('logs')
+    ]);
 }
 
-async function writeSessionData() {
-    if (!process.env.SESSION_DATA) {
-        throw new Error('SESSION_DATA environment variable is required');
-    }
-
+async function processSessionData() {
+    if (!process.env.SESSION_DATA) return false;
+    
     try {
-        const sessionData = JSON.parse(Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8'));
+        const sessionData = JSON.parse(Buffer.from(process.env.SESSION_DATA, 'base64').toString());
         await fs.emptyDir(sessionDir);
-        await fs.ensureDir(sessionDir);
-        await fs.writeJSON(path.join(sessionDir, 'creds.json'), sessionData);
+        await fs.writeJSON(path.join(sessionDir, 'creds.json'), sessionData, { spaces: 2 });
         return true;
     } catch (error) {
-        logger.error('Failed to write session data:', error);
-        throw error;
+        logger.error('Session data processing failed:', error);
+        return false;
     }
-}
-
-async function createDefaultThumbnail() {
-    const defaultThumbnailPath = './assets/thumbnail.jpg';
-    const defaultThumbnailData = Buffer.from('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDABQODxIPDRQSEBIXFRQdHx0fHRsdHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR3/2wBDAR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR3/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=', 'base64');
-    await fs.writeFile(defaultThumbnailPath, defaultThumbnailData);
 }
 
 async function connectToWhatsApp() {
-    if (isConnecting) return;
+    if (isConnecting) return null;
     isConnecting = true;
 
     try {
-        await ensureDirectories();
-        await createDefaultThumbnail();
-        await writeSessionData();
-        
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         const { version } = await fetchLatestBaileysVersion();
         
@@ -95,63 +80,62 @@ async function connectToWhatsApp() {
             connectTimeoutMs: 60000,
             retryRequestDelayMs: 5000,
             maxRetries: 5,
-            qrTimeout: 60000,
+            qrTimeout: 40000,
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: true,
-            getMessage: async () => {
-                return { conversation: config.botName };
-            }
+            getMessage: async () => ({ conversation: config.botName })
         });
 
-        sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
-            
+        sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
             if (connection === 'close') {
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
                 isConnecting = false;
-                
+
                 if (shouldReconnect && retryCount < MAX_RETRIES) {
                     retryCount++;
                     logger.info(`Reconnecting... Attempt ${retryCount}`);
                     setTimeout(connectToWhatsApp, 5000);
                 } else {
-                    logger.error('Connection closed. Max retries reached or logged out.');
+                    logger.error('Connection terminated');
                     process.exit(1);
                 }
             }
-            
+
             if (connection === 'open') {
                 retryCount = 0;
                 isConnecting = false;
                 logger.info('Connected to WhatsApp');
-                
+
                 if (initialConnection) {
                     initialConnection = false;
-                    const startupMsg = await startupMessage();
                     try {
-                        await sock.sendMessage(config.ownerNumber + '@s.whatsapp.net', {
-                            text: startupMsg
-                        });
+                        await sock.sendMessage(
+                            `${config.ownerNumber}@s.whatsapp.net`,
+                            { text: await startupMessage() }
+                        );
                     } catch (error) {
-                        logger.error('Failed to send startup message:', error);
+                        logger.error('Startup message failed:', error);
                     }
                 }
             }
         });
 
-        sock.ev.on('creds.update', saveCreds);
-        
-        sock.ev.on('messages.upsert', async chatUpdate => {
-            if (chatUpdate.type === 'notify') {
-                for (const msg of chatUpdate.messages) {
+        sock.ev.on('creds.update', async () => {
+            await saveCreds();
+            if (process.env.RENDER) {
+                const credsFile = await fs.readFile(path.join(sessionDir, 'creds.json'), 'utf8');
+                logger.info('New session data:', Buffer.from(credsFile).toString('base64'));
+            }
+        });
+
+        sock.ev.on('messages.upsert', async ({ messages, type }) => {
+            if (type === 'notify') {
+                for (const msg of messages) {
                     if (!msg.key.fromMe) {
                         try {
                             await messageHandler(sock, msg);
                         } catch (error) {
-                            logger.error('Message handler error:', error);
-                            if (error.message.includes('Session closed')) {
-                                process.exit(1);
-                            }
+                            logger.error('Message handling failed:', error);
                         }
                     }
                 }
@@ -162,14 +146,14 @@ async function connectToWhatsApp() {
     } catch (error) {
         isConnecting = false;
         logger.error('Connection error:', error);
+        
         if (retryCount < MAX_RETRIES) {
             retryCount++;
-            logger.info(`Retrying connection... Attempt ${retryCount}`);
             setTimeout(connectToWhatsApp, 5000);
         } else {
-            logger.error('Max retries reached. Exiting...');
             process.exit(1);
         }
+        return null;
     }
 }
 
@@ -178,9 +162,7 @@ async function startServer() {
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
     
-    app.get('/', (req, res) => {
-        res.send(`${config.botName} is running!`);
-    });
+    app.get('/', (_, res) => res.send(`${config.botName} is running!`));
     
     app.listen(port, '0.0.0.0', () => {
         logger.info(`Server running on port ${port}`);
@@ -190,24 +172,24 @@ async function startServer() {
 async function initialize() {
     try {
         await displayBanner();
+        await ensureDirectories();
         await connectToDatabase();
+        await processSessionData();
         await initializeCommands();
         await connectToWhatsApp();
         await startServer();
-        
+
         process.on('unhandledRejection', (error) => {
             logger.error('Unhandled rejection:', error);
-            if (error.message.includes('Session closed')) {
-                process.exit(1);
-            }
+            if (error.message?.includes('Session closed')) process.exit(1);
         });
-        
+
         process.on('uncaughtException', (error) => {
             logger.error('Uncaught exception:', error);
             process.exit(1);
         });
     } catch (error) {
-        logger.error('Initialization error:', error);
+        logger.error('Initialization failed:', error);
         process.exit(1);
     }
 }
